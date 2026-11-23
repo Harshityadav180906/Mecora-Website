@@ -24,6 +24,8 @@ try {
   dns.setServers(['8.8.8.8', '1.1.1.1']);
 } catch (e) {}
 
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://harshity1809_db_user:Mecora123456@cluster0.upka52f.mongodb.net/mecora?retryWrites=true&w=majority';
+
 let isConnected = false;
 async function connectDB() {
   if (isConnected || mongoose.connection.readyState === 1) {
@@ -31,8 +33,8 @@ async function connectDB() {
     return;
   }
   try {
-    if (process.env.MONGODB_URI) {
-      await mongoose.connect(process.env.MONGODB_URI, { dbName: 'mecora' });
+    if (MONGODB_URI) {
+      await mongoose.connect(MONGODB_URI, { dbName: 'mecora' });
       isConnected = true;
       console.log('✅ MongoDB connected successfully');
     }
@@ -47,18 +49,23 @@ app.use(async (req, res, next) => {
   next();
 });
 
-// Razorpay instance
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET,
-});
+// Razorpay instance with safe fallback
+let razorpay = null;
+try {
+  razorpay = new Razorpay({
+    key_id: process.env.RAZORPAY_KEY_ID || 'rzp_test_placeholder',
+    key_secret: process.env.RAZORPAY_KEY_SECRET || 'secret_placeholder',
+  });
+} catch (rErr) {
+  console.warn('⚠️ Razorpay initialization notice:', rErr.message);
+}
 
 // Email transporter
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
+    user: process.env.EMAIL_USER || '',
+    pass: process.env.EMAIL_PASS || '',
   },
 });
 
@@ -78,25 +85,46 @@ app.post('/api/signup', async (req, res) => {
       return res.status(400).json({ success: false, message: 'All fields are required' });
     }
 
+    const cleanEmail = email.trim().toLowerCase();
+
     // Check if user already exists
-    const existingUser = await User.findOne({ email });
+    const existingUser = await User.findOne({ email: cleanEmail });
     if (existingUser) {
-      return res.status(400).json({ success: false, message: 'Email already registered' });
+      return res.status(400).json({ success: false, message: 'Email already registered. Please login to proceed.' });
     }
 
+    const isAdmin =
+      cleanEmail === 'harshit.y.1809@gmail.com' ||
+      cleanEmail === 'admin@mecora.com' ||
+      (process.env.ADMIN_EMAIL && cleanEmail === process.env.ADMIN_EMAIL.toLowerCase());
+
     // Create new user
-    const user = new User({ name, email, password, phone });
+    const user = new User({
+      name,
+      email: cleanEmail,
+      password,
+      phone,
+      role: isAdmin ? 'admin' : 'user',
+    });
     await user.save();
 
-    console.log(`👤 New user registered: ${name} (${email})`);
+    console.log(`👤 New user registered: ${name} (${cleanEmail}) [role: ${user.role}]`);
 
     res.json({
       success: true,
-      user: { id: user._id, name: user.name, email: user.email, phone: user.phone },
+      user: { id: user._id, name: user.name, email: user.email, phone: user.phone, role: user.role },
     });
   } catch (error) {
     console.error('Signup error:', error);
-    res.status(500).json({ success: false, message: 'Server error during signup' });
+    let message = 'Server error during registration';
+    if (error.name === 'ValidationError') {
+      message = Object.values(error.errors).map(val => val.message).join(', ');
+    } else if (error.code === 11000) {
+      message = 'An account with this email already exists. Please log in.';
+    } else if (error.message) {
+      message = error.message;
+    }
+    res.status(400).json({ success: false, message });
   }
 });
 
@@ -105,16 +133,82 @@ app.post('/api/login', async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    const user = await User.findOne({ email, password });
-    if (!user) {
-      return res.status(401).json({ success: false, message: 'Invalid email or password' });
+    if (!email || !password) {
+      return res.status(400).json({ success: false, message: 'Email and password are required' });
     }
 
-    console.log(`🔑 User logged in: ${user.name} (${email})`);
+    const cleanEmail = email.trim().toLowerCase();
+
+    // Dedicated Master Admin Login (admin@mecora.com / admin123)
+    if (cleanEmail === 'admin@mecora.com' && password === 'admin123') {
+      let adminUser = await User.findOne({ email: cleanEmail });
+      if (!adminUser) {
+        adminUser = new User({
+          name: 'Harshit Yadav (Admin)',
+          email: 'admin@mecora.com',
+          password: 'admin123',
+          phone: '09667812705',
+          role: 'admin',
+        });
+        await adminUser.save();
+      } else if (adminUser.role !== 'admin') {
+        adminUser.role = 'admin';
+        await adminUser.save();
+      }
+      console.log(`👑 Admin logged in: ${adminUser.name} (${cleanEmail})`);
+      return res.json({
+        success: true,
+        user: {
+          id: adminUser._id,
+          name: adminUser.name,
+          email: adminUser.email,
+          phone: adminUser.phone,
+          role: 'admin',
+        },
+      });
+    }
+
+    // Check if user exists in database
+    const user = await User.findOne({ email: cleanEmail, password });
+    if (!user) {
+      // Check if email is registered at all (Enforce: without signup person cannot login)
+      const userExists = await User.findOne({ email: cleanEmail });
+      if (!userExists) {
+        return res.status(404).json({
+          success: false,
+          notRegistered: true,
+          message: 'Account not found! You must sign up first before you can log in and make a payment.',
+        });
+      }
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid password. Please check your password and try again.',
+      });
+    }
+
+    // Determine admin status
+    const isAdmin =
+      user.role === 'admin' ||
+      cleanEmail === 'harshit.y.1809@gmail.com' ||
+      cleanEmail === 'admin@mecora.com' ||
+      (process.env.ADMIN_EMAIL && cleanEmail === process.env.ADMIN_EMAIL.toLowerCase());
+
+    if (isAdmin && user.role !== 'admin') {
+      user.role = 'admin';
+      await user.save();
+    }
+
+    console.log(`🔑 ${isAdmin ? '👑 Admin' : 'User'} logged in: ${user.name} (${cleanEmail})`);
 
     res.json({
       success: true,
-      user: { id: user._id, name: user.name, email: user.email, phone: user.phone },
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        role: isAdmin ? 'admin' : (user.role || 'user'),
+      },
     });
   } catch (error) {
     console.error('Login error:', error);

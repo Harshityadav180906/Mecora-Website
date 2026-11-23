@@ -16,6 +16,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initParticles();
   initCounterAnimations();
   initAuthForms();
+  initUserSession();
 });
 
 // ===== THEME TOGGLE (DARK / LIGHT) =====
@@ -235,15 +236,105 @@ function initAuthForms() {
   }
 }
 
+// ===== USER SESSION & NAVBAR MANAGEMENT =====
+function initUserSession() {
+  try {
+    const savedUser = localStorage.getItem('mecora_user');
+    if (savedUser) {
+      currentUser = JSON.parse(savedUser);
+      // Auto-upgrade Harshit / admin if saved in session
+      if (
+        currentUser &&
+        (currentUser.email === 'harshit.y.1809@gmail.com' ||
+         currentUser.email === 'admin@mecora.com' ||
+         currentUser.role === 'admin')
+      ) {
+        currentUser.role = 'admin';
+        localStorage.setItem('mecora_user', JSON.stringify(currentUser));
+      }
+      updateNavAuth();
+      console.log(`👤 Active session restored: ${currentUser.name} (${currentUser.role || 'user'})`);
+    }
+  } catch (err) {
+    console.error('Session restore error:', err);
+  }
+}
+
+function updateNavAuth() {
+  const container = document.getElementById('navAuthButtons');
+  if (!container) return;
+
+  if (currentUser && currentUser.role === 'admin') {
+    container.innerHTML = `
+      <button class="btn btn-sm btn-admin-nav" onclick="showAdminModal()">
+        <i class="fas fa-crown"></i> Admin Dashboard
+      </button>
+      <button class="btn btn-outline btn-sm" onclick="logoutUser()" title="Logout Admin">
+        <i class="fas fa-sign-out-alt"></i> Logout
+      </button>
+    `;
+  } else if (currentUser) {
+    container.innerHTML = `
+      <button class="btn btn-sm" onclick="openUserOrAdminModal()" style="border-radius: 20px; font-size: 0.82rem; font-weight: 600; color: var(--accent-cyan); display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.35rem 0.75rem; background: rgba(0,212,255,0.08); border: 1px solid rgba(0,212,255,0.25); cursor: pointer;">
+        <i class="fas fa-user-circle"></i> ${escapeHtml(currentUser.name)}
+      </button>
+      <button class="btn btn-outline btn-sm" onclick="logoutUser()" title="Logout">
+        <i class="fas fa-sign-out-alt"></i>
+      </button>
+    `;
+  } else {
+    container.innerHTML = `
+      <button class="btn btn-outline btn-sm" onclick="showLoginModal(null, 'login')">
+        <i class="fas fa-sign-in-alt"></i> Login
+      </button>
+      <a href="#pricing" class="btn btn-primary btn-sm">
+        Get Started <i class="fas fa-arrow-right"></i>
+      </a>
+    `;
+  }
+}
+
+function logoutUser() {
+  currentUser = null;
+  localStorage.removeItem('mecora_user');
+  updateNavAuth();
+  closeAdminModal();
+  showToast('Logged out successfully.', 'info');
+}
+
+function openUserOrAdminModal() {
+  if (currentUser && (currentUser.role === 'admin' || currentUser.email === 'harshit.y.1809@gmail.com' || currentUser.email === 'admin@mecora.com')) {
+    showAdminModal();
+  } else {
+    showToast(`Logged in as ${currentUser?.name || 'Customer'} (${currentUser?.email || ''})`, 'info');
+  }
+}
+
 // ===== LOGIN/SIGNUP MODAL =====
-function showLoginModal(plan) {
+function showLoginModal(plan = null, defaultTab = 'login') {
   selectedPlan = plan;
   const modal = document.getElementById('authModal');
   if (!modal) return;
+
+  const authNotice = document.getElementById('authNotice');
+  const titleEl = document.getElementById('authModalTitle');
+  const subtitleEl = document.getElementById('authModalSubtitle');
+
+  if (plan) {
+    // When buying a plan without login: User MUST sign up first!
+    if (authNotice) authNotice.style.display = 'flex';
+    if (titleEl) titleEl.textContent = 'Account Registration Required';
+    if (subtitleEl) subtitleEl.textContent = 'Please sign up or log in first to purchase and activate your subscription.';
+    defaultTab = 'signup'; // Enforce signup first
+  } else {
+    if (authNotice) authNotice.style.display = 'none';
+    if (titleEl) titleEl.textContent = 'Welcome to Mecora';
+    if (subtitleEl) subtitleEl.textContent = 'Sign in or create an account to proceed';
+  }
+
   modal.classList.add('active');
   document.body.style.overflow = 'hidden';
-  // Default to login tab
-  switchAuthTab('login');
+  switchAuthTab(defaultTab);
 }
 
 function closeAuthModal() {
@@ -266,13 +357,18 @@ function switchAuthTab(tab) {
 async function handleSignup(e) {
   e.preventDefault();
   const form = e.target;
-  const name = form.querySelector('#signupName')?.value || '';
-  const email = form.querySelector('#signupEmail')?.value || '';
-  const phone = form.querySelector('#signupPhone')?.value || '';
+  const name = form.querySelector('#signupName')?.value?.trim() || '';
+  const email = form.querySelector('#signupEmail')?.value?.trim() || '';
+  const phone = form.querySelector('#signupPhone')?.value?.trim() || '';
   const password = form.querySelector('#signupPassword')?.value || '';
+
+  if (!name || !email || !phone || !password) {
+    showToast('Please fill out all required fields', 'error');
+    return;
+  }
   
   const btn = form.querySelector('button[type="submit"]');
-  const originalBtnText = btn ? btn.innerHTML : 'Create Account & Pay';
+  const originalBtnText = btn ? btn.innerHTML : 'Create Account & Proceed';
   if (btn) {
     btn.innerHTML = '<span class="spinner"></span> Creating Account...';
     btn.disabled = true;
@@ -288,14 +384,29 @@ async function handleSignup(e) {
     
     if (data.success) {
       currentUser = data.user;
-      showToast('Account created successfully!', 'success');
+      localStorage.setItem('mecora_user', JSON.stringify(currentUser));
+      updateNavAuth();
       closeAuthModal();
-      initiatePayment();
+
+      if (currentUser.role === 'admin') {
+        showToast('👑 Welcome Admin! Opening Verification & Payments Portal...', 'success');
+        showAdminModal();
+      } else {
+        showToast(`Account registered successfully! Welcome ${currentUser.name}`, 'success');
+        if (selectedPlan) {
+          initiatePayment();
+        }
+      }
     } else {
-      showToast(data.message || 'Signup failed', 'error');
+      showToast(data.message || 'Signup failed. Please try again.', 'error');
+      if (data.message && data.message.includes('already registered')) {
+        switchAuthTab('login');
+        const loginEmail = document.getElementById('loginEmail');
+        if (loginEmail) loginEmail.value = email;
+      }
     }
   } catch (err) {
-    showToast('Network error. Please try again.', 'error');
+    showToast('Network error during registration. Please try again.', 'error');
   } finally {
     if (btn) {
       btn.innerHTML = originalBtnText;
@@ -308,11 +419,16 @@ async function handleSignup(e) {
 async function handleLogin(e) {
   e.preventDefault();
   const form = e.target;
-  const email = form.querySelector('#loginEmail')?.value || '';
+  const email = form.querySelector('#loginEmail')?.value?.trim() || '';
   const password = form.querySelector('#loginPassword')?.value || '';
+
+  if (!email || !password) {
+    showToast('Please enter both email and password', 'error');
+    return;
+  }
   
   const btn = form.querySelector('button[type="submit"]');
-  const originalBtnText = btn ? btn.innerHTML : 'Login & Pay';
+  const originalBtnText = btn ? btn.innerHTML : 'Login';
   if (btn) {
     btn.innerHTML = '<span class="spinner"></span> Logging in...';
     btn.disabled = true;
@@ -328,14 +444,35 @@ async function handleLogin(e) {
     
     if (data.success) {
       currentUser = data.user;
-      showToast(`Welcome back, ${data.user.name}!`, 'success');
+      localStorage.setItem('mecora_user', JSON.stringify(currentUser));
+      updateNavAuth();
       closeAuthModal();
-      initiatePayment();
+
+      // IF ADMIN LOGS IN -> OPEN ADMIN PORTAL DIRECTLY!
+      if (currentUser.role === 'admin') {
+        showToast('👑 Welcome Harshit! Opening Admin Payments & Verification Portal...', 'success');
+        showAdminModal();
+      } else {
+        showToast(`Welcome back, ${data.user.name}!`, 'success');
+        if (selectedPlan) {
+          initiatePayment();
+        }
+      }
     } else {
-      showToast(data.message || 'Login failed', 'error');
+      // If user hasn't signed up yet: inform clearly and switch to signup!
+      if (data.notRegistered) {
+        showToast(data.message, 'warning');
+        switchAuthTab('signup');
+        const signupEmail = document.getElementById('signupEmail');
+        if (signupEmail) signupEmail.value = email;
+        const signupName = document.getElementById('signupName');
+        if (signupName) signupName.focus();
+      } else {
+        showToast(data.message || 'Invalid credentials. Please try again.', 'error');
+      }
     }
   } catch (err) {
-    showToast('Network error. Please try again.', 'error');
+    showToast('Network error during login. Please try again.', 'error');
   } finally {
     if (btn) {
       btn.innerHTML = originalBtnText;
@@ -589,11 +726,12 @@ function hideLoadingOverlay() {
 
 // ===== PLAN SELECTION (called from onclick on pricing cards) =====
 function selectPlan(planType) {
+  selectedPlan = planType;
   if (currentUser) {
-    selectedPlan = planType;
     initiatePayment();
   } else {
-    showLoginModal(planType);
+    // Without signup a person cannot login and do payment: Enforce Signup!
+    showLoginModal(planType, 'signup');
   }
 }
 
@@ -807,4 +945,300 @@ function initDemoVideoPlayer() {
   // Initialize both players
   new SlidePlayer(pcPlayer, 'pcPlayBtn', 'pcProgress', 'pcCurrent', 'pcTotal');
   new SlidePlayer(phonePlayer, 'phonePlayBtn', 'phoneProgress', 'phoneCurrent', 'phoneTotal');
+}
+
+// ===== ADMIN PORTAL & CUSTOMER PAYMENT DIRECTORY =====
+let allAdminPayments = [];
+let activeAdminFilter = 'all';
+
+function showAdminModal() {
+  const modal = document.getElementById('adminModal');
+  if (!modal) return;
+  modal.classList.add('active');
+  document.body.style.overflow = 'hidden';
+  loadAdminPayments();
+}
+
+function closeAdminModal() {
+  const modal = document.getElementById('adminModal');
+  if (!modal) return;
+  modal.classList.remove('active');
+  document.body.style.overflow = '';
+}
+
+async function loadAdminPayments(showToastNotice = false) {
+  const refreshIcon = document.getElementById('adminRefreshIcon');
+  if (refreshIcon) refreshIcon.classList.add('fa-spin');
+
+  const tableBody = document.getElementById('adminPaymentsTableBody');
+
+  try {
+    const res = await fetch(`${API_BASE}/api/payments`);
+    const data = await res.json();
+
+    if (data.success && Array.isArray(data.payments)) {
+      allAdminPayments = data.payments;
+      updateAdminKPIs(allAdminPayments);
+      filterAdminPayments();
+
+      if (showToastNotice) {
+        showToast('Payment records refreshed from MongoDB Atlas', 'success');
+      }
+    } else {
+      if (tableBody) {
+        tableBody.innerHTML = `
+          <tr>
+            <td colspan="7" style="text-align: center; padding: 2rem; color: #fc8181;">
+              <i class="fas fa-exclamation-triangle"></i> Failed to load payments from database.
+            </td>
+          </tr>
+        `;
+      }
+    }
+  } catch (err) {
+    console.error('Error fetching payments:', err);
+    if (tableBody) {
+      tableBody.innerHTML = `
+        <tr>
+          <td colspan="7" style="text-align: center; padding: 2rem; color: #fc8181;">
+            <i class="fas fa-wifi"></i> Network error fetching payment directory.
+          </td>
+        </tr>
+      `;
+    }
+  } finally {
+    if (refreshIcon) {
+      setTimeout(() => refreshIcon.classList.remove('fa-spin'), 600);
+    }
+  }
+}
+
+function updateAdminKPIs(payments) {
+  const revenueEl = document.getElementById('adminKpiRevenue');
+  const ordersEl = document.getElementById('adminKpiOrders');
+  const customersEl = document.getElementById('adminKpiCustomers');
+  const latestEl = document.getElementById('adminKpiLatest');
+
+  // Revenue sum
+  let totalRevenue = 0;
+  payments.forEach(p => {
+    if (typeof p.amount === 'number') {
+      totalRevenue += p.amount;
+    } else if (typeof p.amount === 'string') {
+      const num = parseInt(p.amount.replace(/[^0-9]/g, ''), 10);
+      if (!isNaN(num)) totalRevenue += num;
+    }
+  });
+
+  // Unique customers
+  const uniqueEmails = new Set(payments.map(p => p.userEmail?.toLowerCase() || ''));
+  uniqueEmails.delete('');
+
+  // Latest date
+  let latestText = '-';
+  if (payments.length > 0) {
+    const first = payments[0];
+    latestText = first.createdAt
+      ? new Date(first.createdAt).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      : (first.date || 'Recent');
+  }
+
+  if (revenueEl) revenueEl.textContent = '₹' + totalRevenue.toLocaleString('en-IN');
+  if (ordersEl) ordersEl.textContent = payments.length;
+  if (customersEl) customersEl.textContent = uniqueEmails.size;
+  if (latestEl) latestEl.textContent = latestText;
+
+  // Plan counts for pills
+  const countAll = document.getElementById('countAll');
+  const countQuarterly = document.getElementById('countQuarterly');
+  const countAnnual = document.getElementById('countAnnual');
+  const countMonthly = document.getElementById('countMonthly');
+
+  if (countAll) countAll.textContent = payments.length;
+  if (countQuarterly) countQuarterly.textContent = payments.filter(p => (p.planType || '').toLowerCase() === 'quarterly').length;
+  if (countAnnual) countAnnual.textContent = payments.filter(p => (p.planType || '').toLowerCase() === 'annual').length;
+  if (countMonthly) countMonthly.textContent = payments.filter(p => (p.planType || '').toLowerCase() === 'monthly').length;
+}
+
+function setAdminPlanFilter(filter) {
+  activeAdminFilter = filter;
+  document.querySelectorAll('.admin-filter-pill').forEach(pill => {
+    pill.classList.toggle('active', pill.dataset.filter === filter);
+  });
+  filterAdminPayments();
+}
+
+function filterAdminPayments() {
+  const searchInput = document.getElementById('adminSearchInput');
+  const query = searchInput ? searchInput.value.trim().toLowerCase() : '';
+
+  const filtered = allAdminPayments.filter(p => {
+    // Plan filter
+    const planMatch = activeAdminFilter === 'all' || (p.planType || '').toLowerCase() === activeAdminFilter;
+    if (!planMatch) return false;
+
+    // Search query
+    if (!query) return true;
+    const nameMatch = (p.userName || '').toLowerCase().includes(query);
+    const emailMatch = (p.userEmail || '').toLowerCase().includes(query);
+    const phoneMatch = (p.userPhone || '').toLowerCase().includes(query);
+    const orderMatch = (p.razorpayOrderId || p.orderId || '').toLowerCase().includes(query);
+    const paymentMatch = (p.razorpayPaymentId || p.id || '').toLowerCase().includes(query);
+
+    return nameMatch || emailMatch || phoneMatch || orderMatch || paymentMatch;
+  });
+
+  renderAdminTable(filtered);
+}
+
+function renderAdminTable(payments) {
+  const tbody = document.getElementById('adminPaymentsTableBody');
+  if (!tbody) return;
+
+  if (payments.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="7" style="text-align: center; padding: 2.5rem; color: var(--text-muted);">
+          <i class="fas fa-search" style="font-size: 1.5rem; margin-bottom: 0.5rem; display: block; opacity: 0.5;"></i>
+          No customer payments matching your search or filter.
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  tbody.innerHTML = payments.map((p) => {
+    const customerName = p.userName || 'Customer';
+    const initials = customerName.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() || 'U';
+    const email = p.userEmail || 'No email';
+    const phone = p.userPhone || 'Not provided';
+    const cleanPhone = phone.replace(/[^0-9]/g, '');
+    const planType = (p.planType || 'monthly').toLowerCase();
+    const planName = planType.charAt(0).toUpperCase() + planType.slice(1) + ' Plan';
+    const amount = p.amountFormatted || (typeof p.amount === 'number' ? '₹' + p.amount.toLocaleString('en-IN') : p.amount || '₹0');
+
+    // Format date nicely
+    let formattedDate = p.date || '';
+    if (p.createdAt) {
+      const d = new Date(p.createdAt);
+      formattedDate = d.toLocaleString('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    }
+
+    const paymentId = p.razorpayPaymentId || p.id || '-';
+    const orderId = p.razorpayOrderId || p.orderId || '-';
+
+    // WhatsApp prefilled message
+    const waMessage = encodeURIComponent(`Hello ${customerName}, this is Harshit from Mecora Medical Software. Thank you for your purchase of the ${planName} (${amount})! Our team is reaching out to set up and configure your pharmacy software.`);
+    const waUrl = cleanPhone ? `https://wa.me/${cleanPhone.startsWith('91') ? cleanPhone : '91' + cleanPhone.replace(/^0+/, '')}?text=${waMessage}` : '#';
+
+    return `
+      <tr>
+        <td>
+          <div class="admin-customer-cell">
+            <div class="admin-customer-avatar">${escapeHtml(initials)}</div>
+            <div class="admin-customer-meta">
+              <strong>${escapeHtml(customerName)}</strong>
+              <a href="mailto:${escapeHtml(email)}">${escapeHtml(email)}</a>
+            </div>
+          </div>
+        </td>
+        <td>
+          <div class="admin-contact-actions">
+            ${cleanPhone ? `
+              <a href="tel:${escapeHtml(cleanPhone)}" class="contact-pill call" title="Direct Phone Call">
+                <i class="fas fa-phone-alt"></i> ${escapeHtml(phone)}
+              </a>
+              <a href="${waUrl}" target="_blank" rel="noopener" class="contact-pill wa" title="Chat on WhatsApp">
+                <i class="fab fa-whatsapp"></i> WhatsApp
+              </a>
+            ` : `<span style="color: var(--text-muted); font-size: 0.78rem;">No phone</span>`}
+            <a href="mailto:${escapeHtml(email)}?subject=${encodeURIComponent('Mecora Medical Software Setup - ' + planName)}" class="contact-pill mail" title="Send Email">
+              <i class="fas fa-envelope"></i> Email
+            </a>
+          </div>
+        </td>
+        <td>
+          <span class="admin-plan-badge ${escapeHtml(planType)}">
+            ${escapeHtml(planName)}
+          </span>
+        </td>
+        <td>
+          <span class="admin-amount-text">${escapeHtml(amount)}</span>
+        </td>
+        <td>
+          <span style="font-size: 0.8rem; color: var(--text-light);">${escapeHtml(formattedDate)}</span>
+        </td>
+        <td>
+          <span class="admin-status-pill">
+            <i class="fas fa-check-circle"></i> Success
+          </span>
+        </td>
+        <td>
+          <div style="display: flex; flex-direction: column; gap: 0.2rem;">
+            <span class="admin-id-tag" title="Click to copy Payment ID" onclick="copyText('${escapeHtml(paymentId)}', 'Payment ID')" style="cursor: pointer;">
+              💳 ${escapeHtml(paymentId.length > 14 ? paymentId.substring(0, 14) + '...' : paymentId)}
+            </span>
+            <span class="admin-id-tag" title="Click to copy Order ID" onclick="copyText('${escapeHtml(orderId)}', 'Order ID')" style="cursor: pointer;">
+              📦 ${escapeHtml(orderId.length > 14 ? orderId.substring(0, 14) + '...' : orderId)}
+            </span>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function exportAdminPaymentsCSV() {
+  if (!allAdminPayments || allAdminPayments.length === 0) {
+    showToast('No payment records to export', 'warning');
+    return;
+  }
+
+  const headers = ['Order ID', 'Payment ID', 'Customer Name', 'Email', 'Phone', 'Plan Type', 'Amount', 'Date', 'Status'];
+  const rows = allAdminPayments.map(p => [
+    `"${(p.razorpayOrderId || p.orderId || '').replace(/"/g, '""')}"`,
+    `"${(p.razorpayPaymentId || p.id || '').replace(/"/g, '""')}"`,
+    `"${(p.userName || '').replace(/"/g, '""')}"`,
+    `"${(p.userEmail || '').replace(/"/g, '""')}"`,
+    `"${(p.userPhone || '').replace(/"/g, '""')}"`,
+    `"${(p.planType || '').replace(/"/g, '""')}"`,
+    `"${(p.amountFormatted || p.amount || '').toString().replace(/"/g, '""')}"`,
+    `"${(p.createdAt || p.date || '').replace(/"/g, '""')}"`,
+    `"Success"`
+  ]);
+
+  const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+  const encodedUri = encodeURI(csvContent);
+  const link = document.createElement('a');
+  link.setAttribute('href', encodedUri);
+  link.setAttribute('download', `mecora_customer_payments_${new Date().toISOString().slice(0, 10)}.csv`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  showToast('Payments CSV report downloaded successfully', 'success');
+}
+
+function escapeHtml(text) {
+  if (typeof text !== 'string') return text || '';
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function copyText(text, label = 'Text') {
+  navigator.clipboard.writeText(text).then(() => {
+    showToast(`${label} copied to clipboard!`, 'info');
+  }).catch(() => {
+    showToast(`Could not copy ${label}`, 'error');
+  });
 }

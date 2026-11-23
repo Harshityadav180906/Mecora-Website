@@ -44,10 +44,16 @@ app.use(async (req, res, next) => {
   next();
 });
 
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID || 'rzp_test_placeholder',
-  key_secret: process.env.RAZORPAY_KEY_SECRET || 'secret_placeholder',
-});
+// Razorpay instance with safe fallback
+let razorpay = null;
+try {
+  razorpay = new Razorpay({
+    key_id: process.env.RAZORPAY_KEY_ID || 'rzp_test_placeholder',
+    key_secret: process.env.RAZORPAY_KEY_SECRET || 'secret_placeholder',
+  });
+} catch (rErr) {
+  console.warn('⚠️ Razorpay initialization notice:', rErr.message);
+}
 
 const transporter = nodemailer.createTransport({
   service: 'gmail',
@@ -70,18 +76,39 @@ app.post('/api/signup', async (req, res) => {
     if (!name || !email || !password || !phone) {
       return res.status(400).json({ success: false, message: 'All fields are required' });
     }
-    const existingUser = await User.findOne({ email });
+    const cleanEmail = email.trim().toLowerCase();
+    const existingUser = await User.findOne({ email: cleanEmail });
     if (existingUser) {
-      return res.status(400).json({ success: false, message: 'Email already registered' });
+      return res.status(400).json({ success: false, message: 'Email already registered. Please login to proceed.' });
     }
-    const user = new User({ name, email, password, phone });
+    const isAdmin =
+      cleanEmail === 'harshit.y.1809@gmail.com' ||
+      cleanEmail === 'admin@mecora.com' ||
+      (process.env.ADMIN_EMAIL && cleanEmail === process.env.ADMIN_EMAIL.toLowerCase());
+
+    const user = new User({
+      name,
+      email: cleanEmail,
+      password,
+      phone,
+      role: isAdmin ? 'admin' : 'user',
+    });
     await user.save();
     res.json({
       success: true,
-      user: { id: user._id, name: user.name, email: user.email, phone: user.phone },
+      user: { id: user._id, name: user.name, email: user.email, phone: user.phone, role: user.role },
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Server error during signup' });
+    console.error('Signup error:', error);
+    let message = 'Server error during registration';
+    if (error.name === 'ValidationError') {
+      message = Object.values(error.errors).map(val => val.message).join(', ');
+    } else if (error.code === 11000) {
+      message = 'An account with this email already exists. Please log in.';
+    } else if (error.message) {
+      message = error.message;
+    }
+    res.status(400).json({ success: false, message });
   }
 });
 
@@ -89,13 +116,76 @@ app.post('/api/signup', async (req, res) => {
 app.post('/api/login', async (req, res) => {
   try {
     const { email, password } = req.body;
-    const user = await User.findOne({ email, password });
-    if (!user) {
-      return res.status(401).json({ success: false, message: 'Invalid email or password' });
+    if (!email || !password) {
+      return res.status(400).json({ success: false, message: 'Email and password are required' });
     }
+    const cleanEmail = email.trim().toLowerCase();
+
+    // Dedicated Master Admin Login (admin@mecora.com / admin123)
+    if (cleanEmail === 'admin@mecora.com' && password === 'admin123') {
+      let adminUser = await User.findOne({ email: cleanEmail });
+      if (!adminUser) {
+        adminUser = new User({
+          name: 'Harshit Yadav (Admin)',
+          email: 'admin@mecora.com',
+          password: 'admin123',
+          phone: '09667812705',
+          role: 'admin',
+        });
+        await adminUser.save();
+      } else if (adminUser.role !== 'admin') {
+        adminUser.role = 'admin';
+        await adminUser.save();
+      }
+      return res.json({
+        success: true,
+        user: {
+          id: adminUser._id,
+          name: adminUser.name,
+          email: adminUser.email,
+          phone: adminUser.phone,
+          role: 'admin',
+        },
+      });
+    }
+
+    const user = await User.findOne({ email: cleanEmail, password });
+    if (!user) {
+      // Check if email is registered at all (Enforce: without signup person cannot login)
+      const userExists = await User.findOne({ email: cleanEmail });
+      if (!userExists) {
+        return res.status(404).json({
+          success: false,
+          notRegistered: true,
+          message: 'Account not found! You must sign up first before you can log in and make a payment.',
+        });
+      }
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid password. Please check your password and try again.',
+      });
+    }
+
+    const isAdmin =
+      user.role === 'admin' ||
+      cleanEmail === 'harshit.y.1809@gmail.com' ||
+      cleanEmail === 'admin@mecora.com' ||
+      (process.env.ADMIN_EMAIL && cleanEmail === process.env.ADMIN_EMAIL.toLowerCase());
+
+    if (isAdmin && user.role !== 'admin') {
+      user.role = 'admin';
+      await user.save();
+    }
+
     res.json({
       success: true,
-      user: { id: user._id, name: user.name, email: user.email, phone: user.phone },
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        role: isAdmin ? 'admin' : (user.role || 'user'),
+      },
     });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Server error during login' });
@@ -212,6 +302,26 @@ app.get('/api/admin/stats', async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Failed to fetch stats' });
+  }
+});
+
+// API: Get all payments (Admin)
+app.get('/api/payments', async (req, res) => {
+  try {
+    const payments = await Payment.find().sort({ createdAt: -1 });
+    res.json({ success: true, payments });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to fetch payments' });
+  }
+});
+
+// API: Get all users (Admin)
+app.get('/api/users', async (req, res) => {
+  try {
+    const users = await User.find().select('-password').sort({ createdAt: -1 });
+    res.json({ success: true, users });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to fetch users' });
   }
 });
 
