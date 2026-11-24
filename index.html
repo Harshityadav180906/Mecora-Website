@@ -62,6 +62,9 @@
             </span>
           </button>
         </li>
+        <li class="mobile-auth-item" id="mobileNavAuth">
+          <!-- Dynamically populated by updateNavAuth() -->
+        </li>
       </ul>
       
       <div class="nav-actions">
@@ -69,11 +72,11 @@
           <i class="fas fa-sun theme-icon-sun"></i>
           <i class="fas fa-moon theme-icon-moon"></i>
         </button>
-        <div id="navAuthButtons" style="display: flex; gap: 0.5rem; align-items: center;">
-          <button class="btn btn-outline btn-sm" onclick="showLoginModal(null, 'login')">
+        <div id="navAuthButtons" class="nav-auth-buttons" style="display: flex; gap: 0.4rem; align-items: center;">
+          <button class="btn btn-outline btn-sm btn-nav-login" onclick="showLoginModal(null, 'login')">
             <i class="fas fa-sign-in-alt"></i> Login
           </button>
-          <a href="#pricing" class="btn btn-primary btn-sm">
+          <a href="#pricing" class="btn btn-primary btn-sm btn-get-started">
             Get Started <i class="fas fa-arrow-right"></i>
           </a>
         </div>

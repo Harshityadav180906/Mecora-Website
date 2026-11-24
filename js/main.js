@@ -148,18 +148,34 @@ function initMobileMenu() {
   const hamburger = document.querySelector('.hamburger');
   const navLinks = document.querySelector('.nav-links');
   
-  hamburger?.addEventListener('click', () => {
+  hamburger?.addEventListener('click', (e) => {
+    e.stopPropagation();
     hamburger.classList.toggle('active');
     navLinks?.classList.toggle('active');
+    document.body.classList.toggle('menu-open');
   });
   
   // Close menu on link click
   document.querySelectorAll('.nav-links a').forEach(link => {
     link.addEventListener('click', () => {
-      hamburger?.classList.remove('active');
-      navLinks?.classList.remove('active');
+      closeMobileMenu();
     });
   });
+
+  // Close menu on click outside
+  document.addEventListener('click', (e) => {
+    if (navLinks?.classList.contains('active') && !navLinks.contains(e.target) && !hamburger?.contains(e.target)) {
+      closeMobileMenu();
+    }
+  });
+}
+
+function closeMobileMenu() {
+  const hamburger = document.querySelector('.hamburger');
+  const navLinks = document.querySelector('.nav-links');
+  hamburger?.classList.remove('active');
+  navLinks?.classList.remove('active');
+  document.body.classList.remove('menu-open');
 }
 
 // ===== SMOOTH SCROLL =====
@@ -262,35 +278,98 @@ function initUserSession() {
 
 function updateNavAuth() {
   const container = document.getElementById('navAuthButtons');
-  if (!container) return;
+  const mobileContainer = document.getElementById('mobileNavAuth');
+  
+  const isAdmin = currentUser && (
+    currentUser.role === 'admin' || 
+    currentUser.email === 'harshit.y.1809@gmail.com' || 
+    currentUser.email === 'admin@mecora.com'
+  );
 
-  if (currentUser && currentUser.role === 'admin') {
-    container.innerHTML = `
-      <button class="btn btn-sm btn-admin-nav" onclick="showAdminModal()">
-        <i class="fas fa-crown"></i> Admin Dashboard
-      </button>
-      <button class="btn btn-outline btn-sm" onclick="logoutUser()" title="Logout Admin">
-        <i class="fas fa-sign-out-alt"></i> Logout
-      </button>
-    `;
+  if (isAdmin) {
+    if (container) {
+      container.innerHTML = `
+        <button class="btn btn-sm btn-admin-nav" onclick="showAdminModal()" title="Admin Dashboard">
+          <i class="fas fa-crown"></i> <span class="nav-admin-label-full">Admin Dashboard</span><span class="nav-admin-label-short">Admin</span>
+        </button>
+        <button class="btn btn-outline btn-sm btn-nav-logout" onclick="logoutUser()" title="Logout Admin">
+          <i class="fas fa-sign-out-alt"></i> <span class="nav-logout-text">Logout</span>
+        </button>
+      `;
+    }
+    if (mobileContainer) {
+      mobileContainer.innerHTML = `
+        <div class="mobile-auth-card admin-card">
+          <div class="mobile-auth-profile">
+            <div class="mobile-auth-avatar admin-avatar">
+              <i class="fas fa-crown"></i>
+            </div>
+            <div class="mobile-auth-meta">
+              <span class="mobile-auth-name">${escapeHtml(currentUser.name || 'Harshit Yadav')}</span>
+              <span class="mobile-auth-role"><span class="admin-pulse-dot"></span> Super Admin</span>
+            </div>
+          </div>
+          <button class="btn btn-admin-nav btn-block mobile-btn-admin" onclick="showAdminModal(); closeMobileMenu();">
+            <i class="fas fa-crown"></i> Admin Dashboard
+          </button>
+          <button class="btn btn-outline btn-sm btn-block mobile-btn-logout" onclick="logoutUser(); closeMobileMenu();">
+            <i class="fas fa-sign-out-alt"></i> Logout Admin
+          </button>
+        </div>
+      `;
+    }
   } else if (currentUser) {
-    container.innerHTML = `
-      <button class="btn btn-sm" onclick="openUserOrAdminModal()" style="border-radius: 20px; font-size: 0.82rem; font-weight: 600; color: var(--accent-cyan); display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.35rem 0.75rem; background: rgba(0,212,255,0.08); border: 1px solid rgba(0,212,255,0.25); cursor: pointer;">
-        <i class="fas fa-user-circle"></i> ${escapeHtml(currentUser.name)}
-      </button>
-      <button class="btn btn-outline btn-sm" onclick="logoutUser()" title="Logout">
-        <i class="fas fa-sign-out-alt"></i>
-      </button>
-    `;
+    if (container) {
+      container.innerHTML = `
+        <button class="btn btn-sm btn-user-nav" onclick="openUserOrAdminModal()" title="Account">
+          <i class="fas fa-user-circle"></i> <span class="nav-user-label">${escapeHtml(currentUser.name)}</span>
+        </button>
+        <button class="btn btn-outline btn-sm btn-nav-logout" onclick="logoutUser()" title="Logout">
+          <i class="fas fa-sign-out-alt"></i> <span class="nav-logout-text">Logout</span>
+        </button>
+      `;
+    }
+    if (mobileContainer) {
+      mobileContainer.innerHTML = `
+        <div class="mobile-auth-card user-card">
+          <div class="mobile-auth-profile">
+            <div class="mobile-auth-avatar user-avatar">
+              <i class="fas fa-user-circle"></i>
+            </div>
+            <div class="mobile-auth-meta">
+              <span class="mobile-auth-name">${escapeHtml(currentUser.name)}</span>
+              <span class="mobile-auth-role">${escapeHtml(currentUser.email || 'Customer')}</span>
+            </div>
+          </div>
+          <button class="btn btn-outline btn-sm btn-block mobile-btn-logout" onclick="logoutUser(); closeMobileMenu();">
+            <i class="fas fa-sign-out-alt"></i> Logout
+          </button>
+        </div>
+      `;
+    }
   } else {
-    container.innerHTML = `
-      <button class="btn btn-outline btn-sm" onclick="showLoginModal(null, 'login')">
-        <i class="fas fa-sign-in-alt"></i> Login
-      </button>
-      <a href="#pricing" class="btn btn-primary btn-sm">
-        Get Started <i class="fas fa-arrow-right"></i>
-      </a>
-    `;
+    if (container) {
+      container.innerHTML = `
+        <button class="btn btn-outline btn-sm btn-nav-login" onclick="showLoginModal(null, 'login')">
+          <i class="fas fa-sign-in-alt"></i> Login
+        </button>
+        <a href="#pricing" class="btn btn-primary btn-sm btn-get-started">
+          Get Started <i class="fas fa-arrow-right"></i>
+        </a>
+      `;
+    }
+    if (mobileContainer) {
+      mobileContainer.innerHTML = `
+        <div class="mobile-auth-card guest-card">
+          <button class="btn btn-outline btn-block" onclick="showLoginModal(null, 'login'); closeMobileMenu();">
+            <i class="fas fa-sign-in-alt"></i> Login
+          </button>
+          <a href="#pricing" class="btn btn-primary btn-block" onclick="closeMobileMenu();">
+            Get Started <i class="fas fa-arrow-right"></i>
+          </a>
+        </div>
+      `;
+    }
   }
 }
 
